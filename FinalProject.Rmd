@@ -1,0 +1,232 @@
+---
+title: "Final Project"
+output: html_document
+date: "2023-05-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(caret)
+library(ggplot2)
+set.seed(90210)
+```
+
+## Final Project
+
+#### Read in Data
+
+```{r}
+medicine <- read.csv("medicine_dataset.csv")
+medicine <- na.omit(medicine)
+# head(medicine)
+# dim(medicine)
+# colnames(medicine)
+
+justSideEffects <- medicine[, grepl("sideEffect", names(medicine))]
+#head(justSideEffects)
+```
+
+#### Prepare Data for Processing
+```{r}
+
+freq_table <-table(unlist(justSideEffects))
+sorted_values <- names(sort(freq_table, decreasing = TRUE))
+head(sorted_values)
+
+sampMed1 <- medicine %>% group_by(Therapeutic.Class) %>% sample_n(size = 18, replace = FALSE)
+minusSamp1 <- medicine %>% anti_join(sampMed1, by = NULL)
+sampMed2 <- minusSamp1 %>% sample_n(size = 5000, replace = FALSE)
+sampMed <- rbind(sampMed1, sampMed2)
+
+
+unique_effects <- c("Nausea", "Vomiting", "Diarrhea", "Headache", "Rash", "Bleeding", 
+                    "Sleepiness", "Dizziness","Stomach pain", "Dryness in mouth", 
+                    "Flatulence", "Abdominal pain", "Indigestion", "Constipation", "Fatigue",                                                                   "Loss of appetite","Increased liver enzymes","Allergic reaction",                                                                           "Heartburn","Weakness","Insomnia (difficulty in sleeping)","Itching")
+
+for (effect in unique_effects) {
+  column_name <- effect
+  categories <- function(row) {
+    test <- unique(row)
+    if (column_name %in% test) {
+      return(TRUE)
+    } else {
+      return(FALSE)
+    }
+  }
+
+  sampMed[, column_name] <- apply(sampMed, 1, categories)
+}
+
+
+sampMed <- sampMed %>% select(-starts_with(c("use", "sideEffect", "substitute", 
+                                             'Chemical.Class', 'Action.Class')))
+
+sampMed$Habit.Forming <- ifelse(sampMed$Habit.Forming == "Yes", TRUE, FALSE)
+
+sampMed <- data.frame(lapply(sampMed, factor))
+
+# colnames(sampMed)
+# head(sampMed)
+# 
+# dim(sampMed)
+
+#unique(sampMed$Therapeutic.Class)
+
+dim(sampMed)
+
+```
+### EDA
+```{r}
+head(sampMed)
+
+grouped <- sampMed %>% select("Therapeutic.Class")%>% group_by(Therapeutic.Class) %>%
+  summarize(number_class=n()) %>% arrange(desc(number_class))
+
+ggplot(data=grouped)+
+  geom_bar(aes(x=reorder(Therapeutic.Class, number_class), y=number_class), stat="identity", width=0.8)+
+  theme_classic()+
+  geom_text(aes(x=Therapeutic.Class, y=number_class, label = number_class), vjust = 0.5, hjust=-0.3)+
+  theme(panel.background = element_rect(fill = "lightblue", color = "black"),
+        axis.text = element_text(color = "black"))+
+  coord_flip()+
+  labs(x="", 
+       y="Number of Observations",
+       title="Number of Obervations for Each Class in Sampled Data")+
+  ylim(c(0, 1500))
+```
+
+
+```{r}
+sum1 <- sampMed %>% select(!c("id", "name", "Therapeutic.Class"))
+
+counts <- lapply(sum1, table)
+combined_counts <- as.data.frame(do.call(cbind, counts))
+
+final = as.data.frame(t(combined_counts))
+# final <- rbind(final, rep(0, nrow(final)))
+# final$total <- rowSums(final)
+
+
+colnames(final) <- c("numberFalse", "numberTrue")
+final$numberFalse <- as.numeric(final$numberFalse)
+final$numberTrue <- as.numeric(final$numberTrue)
+final$total <- rowSums(final)
+final$pctTrue <- round((final$numberTrue/final$total)*100, digit=2)
+head(final)
+
+justPct <- final %>% select("pctTrue")
+justPct <- as.data.frame(t(justPct))
+head(justPct)
+
+colnames(justPct)[22] <- "Insomnia"
+
+df_long <- gather(justPct, class, pctTrue)
+
+
+ggplot(df_long, aes(x = class, y = pctTrue))+ 
+  geom_bar(aes(x=reorder(class, pctTrue), y=pctTrue), stat="identity", width=0.8)+
+  theme_classic()+
+  geom_text(aes(x=class, y=pctTrue, label = pctTrue), vjust = 0.5, hjust=-0.3)+
+  theme(panel.background = element_rect(fill = "#FF7F7F", color = "black"),
+        axis.text = element_text(color = "black"))+
+  coord_flip()+
+  labs(x="", 
+       y="Percent Having Side Effect",
+       title="Percent of Medications Citing Each Side Effect")+
+  scale_fill_manual(values = c("black"))+
+  ylim(c(0, 100))
+
+```
+
+
+
+#### Linear Discriminant Analysis
+
+```{r}
+
+lda <- train(Therapeutic.Class ~ . - id - name,
+            data=sampMed,
+            method="lda",
+            trControl=trainControl("cv", 5))
+lda
+
+```
+#### Tree Methods 
+
+```{r}
+rf <- train(Therapeutic.Class ~ . - id - name,
+               data=sampMed,
+               method="rf",
+               ntree= 500,
+               trControl=trainControl("cv", 5),
+               tuneGrid=expand.grid(.mtry=c(10:20)),
+               verbose=F)
+rf
+
+# xgb <- train(Therapeutic.Class ~ . - id - name,
+#               data=sampMed,
+#               method="xgbTree",
+#               trControl=trainControl("cv", 5),
+#               tuneGrid=expand.grid(nrounds=seq(1000, 2000, by=100),
+#                                     max_depth=3:5, 
+#                                     eta = 0.1,
+#                                     gamma = 0,
+#                                     colsample_bytree = 1,
+#                                     min_child_weight = 1,
+#                                     subsample = 1), 
+#              
+#               verbose=FALSE
+#               )
+# xgb
+
+```
+
+#### Support Vector Machines
+
+```{r}
+# svc<- train(Therapeutic.Class ~ . - id - name,
+#             data=sampMed,
+#             method="svmLinear",
+#             trControl=trainControl("cv", 5),
+#             tuneGrid=expand.grid(C=seq(1,3,length=10)))
+# svc
+# 
+# svmP <- train(Therapeutic.Class ~ . - id - name,
+#              data=sampMed,
+#              method="svmPoly",
+#              trControl=trainControl("cv", 5),
+#              tuneGrid=expand.grid(C=seq(1,2,length=10),
+#                                  degree=2:5,
+#                                  scale=1))
+# svmP
+
+svmR <- train(Therapeutic.Class ~ . - id - name,
+             data=sampMed,
+             method="svmRadial",
+             trControl=trainControl("cv", 5),
+             tuneGrid=expand.grid(C=seq(1,3,length=10),
+                                 sigma=c(0.1)))
+svmR
+
+```
+#### Nerual Network
+
+```{r}
+nn <- train(Therapeutic.Class ~ . - id - name,
+                data=sampMed,
+                method="nnet",
+                trControl=trainControl("cv",5),
+                tuneGrid=expand.grid(size=15:20,
+                                     decay=0),
+                trace=FALSE)
+
+nn
+
+```
+```{r}
+results <- resamples(list(LDA=lda, NN=nn, RF=rf, SVMR=svmR))
+summary(results)
+```
+
+
